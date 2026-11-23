@@ -43,14 +43,22 @@ struct ModuleIndexCacheEntry: Codable, Sendable {
 struct ModuleIndexCache: Sendable {
     let directoryURL: URL
 
-    init(platform: SDKPlatform, sdkSettings: SDKSettings) {
+    /// The cache of one SDK build: `<root>/<platform>/<SDK version-build>/`.
+    /// `rootDirectoryURL` is the directory the caller gave ``TypeDatabase``,
+    /// or ``defaultRootDirectoryURL`` when it gave none.
+    init(platform: SDKPlatform, sdkSettings: SDKSettings, rootDirectoryURL: URL?) {
         self.init(
-            directoryURL: URL.applicationSupportDirectory
-                .appending(component: "MachOSwiftSection")
-                .appending(component: "SDKIndexer")
+            directoryURL: (rootDirectoryURL ?? Self.defaultRootDirectoryURL)
                 .appending(component: platform.rawValue)
                 .appending(component: sdkSettings.cacheDirectoryComponent)
         )
+    }
+
+    /// `~/Library/Application Support/swift-type-indexing/SDKIndexer`.
+    static var defaultRootDirectoryURL: URL {
+        URL.applicationSupportDirectory
+            .appending(component: "swift-type-indexing")
+            .appending(component: "SDKIndexer")
     }
 
     /// Direct-directory form, the seam tests use to keep cache I/O out of the

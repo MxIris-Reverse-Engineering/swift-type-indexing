@@ -54,17 +54,26 @@ struct SDKIndexer {
     /// entries, in priority order (an earlier hit wins a module-name tie).
     let searchPaths: [String]
 
-    init(
-        platform: SDKPlatform,
-        searchPaths: [String] = [
+    init(platform: SDKPlatform, searchPaths: [String]? = nil) {
+        self.platform = platform
+        self.searchPaths = searchPaths ?? Self.defaultSearchPaths(for: platform)
+    }
+
+    /// The directories of an SDK a platform's modules live in. Mac Catalyst
+    /// reads the macOS SDK's `System/iOSSupport` tree first — UIKit and the
+    /// other iOS frameworks exist only there — then the macOS directories it
+    /// shares with macOS, such as Foundation's.
+    static func defaultSearchPaths(for platform: SDKPlatform) -> [String] {
+        let platformSearchPaths = [
             "usr/include",
             "usr/lib/swift",
             "System/Library/Frameworks",
             "System/Library/PrivateFrameworks",
         ]
-    ) {
-        self.platform = platform
-        self.searchPaths = searchPaths
+        guard platform == .macCatalyst else {
+            return platformSearchPaths
+        }
+        return platformSearchPaths.map { "System/iOSSupport/" + $0 } + platformSearchPaths
     }
 
     func discover(sdkSettings: SDKSettings) -> SDKDiscovery {

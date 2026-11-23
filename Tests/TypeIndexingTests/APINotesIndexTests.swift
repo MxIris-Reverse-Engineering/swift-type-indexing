@@ -87,13 +87,18 @@ struct APINotesIndexTests {
     }
 
     /// `SwiftPrivate` entities keep their module attribution (their C name
-    /// still appears in manglings) but stay out of the rename tables.
+    /// is what manglings record) and are renamed like any other: this one's
+    /// `SwiftName` wins as is. The rule for both attributes:
+    /// `SwiftNameRuleTests`. Until the package moved out of
+    /// MachOSwiftSection, `SwiftPrivate` entities stayed out of the rename
+    /// tables, and `__C.UICellConfigurationState` printed as
+    /// `UIKit.UICellConfigurationState`, a name Swift gives the structure.
     @Test
-    func swiftPrivateEntitiesAreAttributedButNotRenamed() throws {
+    func swiftPrivateEntitiesAreAttributedAndRenamed() throws {
         let index = try Self.makeIndex()
         #expect(index.moduleName(forCName: "TSTPrivateThing") == "TestModule")
-        #expect(index.swiftName(forCName: "TSTPrivateThing", category: .objcClass) == nil)
-        #expect(index.cName(forSwiftName: "__PrivateThing") == nil)
+        #expect(index.swiftName(forCName: "TSTPrivateThing", category: .objcClass)?.name == "__PrivateThing")
+        #expect(index.cName(forSwiftName: "__PrivateThing")?.name == "TSTPrivateThing")
     }
 }
 

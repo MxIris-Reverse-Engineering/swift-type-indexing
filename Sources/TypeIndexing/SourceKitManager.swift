@@ -38,6 +38,7 @@ actor SourceKitManager {
     enum Error: Swift.Error, CustomStringConvertible {
         case missingSourceText(moduleName: String)
         case missingSubstructure(moduleName: String)
+        case sourceKitNotFound
 
         var description: String {
             switch self {
@@ -45,6 +46,8 @@ actor SourceKitManager {
                 return "editor.open.interface returned no source text for module \(moduleName)"
             case .missingSubstructure(let moduleName):
                 return "editor.open.interface returned no substructure for module \(moduleName); the type-name extraction has no input"
+            case .sourceKitNotFound:
+                return "the active developer directory has no sourcekitd"
             }
         }
     }
@@ -58,9 +61,11 @@ actor SourceKitManager {
             return cachedSourceKitD
         }
         // Derived from the active developer directory rather than hardcoding
-        // /Applications/Xcode.app, so Xcode-beta and multi-Xcode setups work.
-        let developerDirectory = try Subprocess.activeDeveloperDirectory()
-        let sourcekitdPath = developerDirectory + "/Toolchains/XcodeDefault.xctoolchain/usr/lib/sourcekitd.framework/Versions/A/sourcekitd"
+        // /Applications/Xcode.app, so Xcode-beta, multi-Xcode and Command
+        // Line Tools setups work.
+        guard let sourcekitdPath = SourceKitLocator.activeSourceKitPath() else {
+            throw Error.sourceKitNotFound
+        }
         let sourceKitD = try await SourceKitD.getOrCreate(dylibPath: URL(fileURLWithPath: sourcekitdPath), pluginPaths: nil)
         cachedSourceKitD = sourceKitD
         return sourceKitD

@@ -33,7 +33,7 @@ module 名替换之外，`__C` 类型的 **identifier 本身**也可能是 Swift
 - **`Ref` 规则对整个 `objc_bridge`（`CF_BRIDGED_TYPE` / `CV_BRIDGED_TYPE` 等各框架宏别名）家族通用**，不是 CoreFoundation 专属——判据只是「剥后名存在于索引」。CG / CV / CM 探针实测（链 CoreGraphics + CoreVideo + libswiftCoreMedia 的 dylib）：同一类型**两种 mangling 形态并存**——符号签名用 C typedef 名（`__C.CGContextRef`），字段元数据用剥后名（`__C.CGContext`）——分别由剥除规则与归属表直查覆盖（提案 0023 之后字段元数据也按描述符 import info 里的 ABI name 拼成 `__C.CGContextRef`，两种形态合一，只靠剥除规则），全部解析为 `CoreGraphics.CGContext` / `CoreVideo.CVBuffer` / `CoreMedia.CMFormatDescription`（`CVPixelBuffer` 在 mangling 层已归一为 `CVBuffer`，输出如实反映 ABI）。CoreMedia 仅以 `libswiftCoreMedia` overlay 形式出现在依赖里，`libswift` 前缀剥除使过滤命中其 SDK 模块——overlay-only 依赖场景成立。
 
 - **Swift interface 类型名**：对二进制依赖命中的每个 SDK 模块，经 sourcekitd `editor.open.interface`（带 `key.enablesubstructure`）生成含 ObjC 导入声明的 Swift 视角 interface，`InterfaceTypeNameExtractor` 从结构树提取 fully-qualified 类型名。**不用 SwiftSyntax**（体积裁定，见提案 A′ 节）；`.swiftinterface` 文件也不可用——它只含 Swift 声明，而本功能主要目标恰是 ObjC 导入类型。
-- **APINotes**：`.apinotes` 是编译器视角的权威归属记录，`APINotesIndex` 把**每个列出的实体**（含无 `SwiftName` 改名、含 `SwiftPrivate`）的 C 名注册到声明模块。它与模块接口各占一张表，查询时先查 API notes 表：`index` 可以多次调用，后来追加的接口名因此不会盖掉 API notes 的结果（原先同一张表、写入时覆盖，只在「整个数据库一次建成」时成立）。双向改名表（`swiftName(forCName:)` / `cName(forSwiftName:)`）只收非 `SwiftPrivate` 的改名实体。
+- **APINotes**：`.apinotes` 是编译器视角的权威归属记录，`APINotesIndex` 把**每个列出的实体**（含无 `SwiftName` 改名、含 `SwiftPrivate`）的 C 名注册到声明模块。它与模块接口各占一张表，查询时先查 API notes 表：`index` 可以多次调用，后来追加的接口名因此不会盖掉 API notes 的结果（原先同一张表、写入时覆盖，只在「整个数据库一次建成」时成立）。双向改名表（`swiftName(forCName:)` / `cName(forSwiftName:)`）按 Clang importer 的规则（`ImportName.cpp`）收：有 `SwiftName` 就用它，不论是否 `SwiftPrivate`（importer 遇到 swift_name 直接返回，不再看 swift_private）；只有 `SwiftPrivate` 时是 `__` + C 名（UIKit 的 `UICellConfigurationState` → `__UICellConfigurationState`）。枚举成员（`Enumerators`）只收 `SwiftName`，它们不是类型，`__` 的位置也按 enum case 的规则另算。搬家之前 `SwiftPrivate` 实体一律不进改名表，`__C.UICellConfigurationState` 因此印成与 Swift 结构体同名的 `UIKit.UICellConfigurationState`——那是 0009 落地时沿用历史实现的保守做法，当时没有记录理由。
 - **运行时元数据懒读**：前两层 miss 才按登记顺序逐个读 `DeclaredTypeNameSource.declaredTypeNames()`（MachOObjCSection 的实现列出 class / protocol / C struct / union 名），并入「名字 → image 模块名」，命中即止；先登记的 image 赢得同名归属。读过的结果缓存在 actor 内；抛错的 source 记日志后丢弃不重试；同一 image 路径重复登记不会再加一次。依赖耗尽后 miss 只花一次字典探查。
 
 ## 补充映射：私有框架的外部知识入口（提案 0010）
@@ -52,12 +52,14 @@ AttributeGraph 这类私有框架在 SDK 里没有任何模块（无头文件、
 
 | 类型 | 职责 | 关键点 |
 |---|---|---|
-| `SDKPlatform` / `SDKSettings` | 平台 → SDK 路径、target triple、SDK 版本标识 | `SDKSettings.plist` 的 `Version` + `ProductBuildVersion` 组成缓存目录段 |
+| `SDKPlatform` / `SDKSettings` | 平台 → SDK 路径、target triple、SDK 版本标识 | `SDKSettings.plist` 的 `Version` + `ProductBuildVersion` 组成缓存目录段；`macCatalyst` 没有自己的 SDK：读 macOS SDK（`xcrunSDKName`），target 是 `ios<SupportedTargets.iosmac.DefaultDeploymentTarget>-macabi`，缓存目录与 macOS 分开 |
 | `Subprocess` | `xcrun` / `xcode-select -p` 同步调用 | 非零退出码抛错，不再静默返回空串 |
-| `SourceKitManager` | actor：sourcekitd 请求 + 响应转值类型 | dylib 路径从 active developer dir 派生（不再硬编码 `/Applications/Xcode.app`）；substructure 在 actor 内转成 `InterfaceDeclarationNode` 值树；`importedModuleNames` 是行级 import 扫描 |
+| `SourceKitLocator` | 在开发者目录里找 sourcekitd | 先试 Xcode 的 `Toolchains/XcodeDefault.xctoolchain/usr/lib/…`，再试 Command Line Tools 的 `usr/lib/…`（没有 `Toolchains` 一层）；两者都是 `sourcekitd.framework/Versions/A/sourcekitd` |
+| `TypeIndexingAvailability` | 某平台能不能索引、为什么不能 | 要开发者目录与该平台的 SDK；sourcekitd 可缺（缺了只少模块接口一层） |
+| `SourceKitManager` | actor：sourcekitd 请求 + 响应转值类型 | dylib 路径经 `SourceKitLocator` 从 active developer dir 派生（不再硬编码 `/Applications/Xcode.app`）；substructure 在 actor 内转成 `InterfaceDeclarationNode` 值树；`importedModuleNames` 是行级 import 扫描 |
 | `InterfaceDeclarationNode` | substructure 的值类型投影 | `other` 节点的子树在转换时即丢弃 |
 | `InterfaceTypeNameExtractor` | 值树 → fully-qualified 类型名（纯函数） | extension 节点用被扩展类型名（可带点）作限定前缀、自身不入清单——旧 SwiftSyntax 解析器的 extension 嵌套键错误在此结构性消失 |
-| `SDKIndexer` | SDK 文件发现（秒级，零 sourcekitd） | `.swiftmodule` 目录 `skipDescendants`；同名模块先到先得（search path 优先级） |
+| `SDKIndexer` | SDK 文件发现（秒级，零 sourcekitd） | `.swiftmodule` 目录 `skipDescendants`；同名模块先到先得（search path 优先级）；`macCatalyst` 先搜 `System/iOSSupport/…` 再搜 macOS 的同名目录 |
 | `APINotesFile` / `APINotesIndex` | `.apinotes` 解析与三张名表 | 修复历史 bug：C 名 → Swift 名映射的 `moduleName` 字段曾被写成 swiftName；`register(files:)` 可追加（后写覆盖，补充包优先级的实现点） |
 | `SupplementaryAPINotesLoader` | 用户自备补充映射的枚举与解析（提案 0010） | 路径可为文件或目录（目录取浅层 `.apinotes` 按文件名排序）；解析失败逐文件记日志跳过；CLI 侧另有 stderr 预检警告 |
 | `ModuleIndexCacheEntry` / `ModuleIndexCache` | per-module JSON 缓存 | 见下节 |
@@ -68,13 +70,16 @@ AttributeGraph 这类私有框架在 SDK 里没有任何模块（无头文件、
 ## 缓存布局
 
 ```
-~/Library/Application Support/MachOSwiftSection/SDKIndexer/<platform>/<Version>-<ProductBuildVersion>/<module>.json
+<cacheDirectory>/<platform>/<Version>-<ProductBuildVersion>/<module>.json
 ```
+
+`cacheDirectory` 是调用方传给 `TypeDatabase(platform:cacheDirectory:supplementaryAPINotesURLs:)` 的目录（RuntimeViewer 放在自己的 Caches 下）；不传时是 `~/Library/Application Support/swift-type-indexing/SDKIndexer`。搬家前的 `Application Support/MachOSwiftSection/SDKIndexer` 不再读，也不自动删。
 
 - 条目是**提取产物**（类型名清单 + submodule 名单），不存 interface 全文。
 - 按 SDK 精确构建分目录：Xcode 升级换目录，陈旧条目自然失效（历史实现只按 platform 分目录且要求全 SDK 索引完成的标记文件，升级后继续吃旧数据）。
 - `generatorVersion` 不匹配的条目按 miss 处理——提取行为变更时把 `ModuleIndexCacheEntry.currentGeneratorVersion` 加一。
 - 全部缓存 I/O 是 best-effort：读写失败记日志、走重新生成，不向上抛错。
+- 开发者目录里没有 sourcekitd 时只读缓存、不生成（`ModuleInterfaceIndexer` 的生成闭包为 `nil`），整个数据库只记一次日志；API notes 与运行时元数据照常工作。
 
 ## 性能形态
 
@@ -94,11 +99,12 @@ TypeIndexing 的类型都标 `@available(macOS 13.0, *)`（包部署下限是 ma
 
 - **swift-dependencies 未引入**：提案 E 节的依赖清单含 `Dependencies`（历史实现用 `@Dependency` 注入 `SourceKitManager`）。落地改为让测试直接驱动 `TypeDatabase` 的 `register` 步骤，不需要依赖注入框架——少一个依赖。
 - **兜底行级解析器未编写**：提案 A′ 允许 substructure 验证失败时退手写解析；scratchpad 探针实测 substructure 完整可用（ObjectiveC / CoreGraphics 两模块，节点带 kind + name + 嵌套 + extension），按提案「二选一定夺」条款只落主路。
-- **APINotes 归属注册比历史实现更宽**：历史实现只注册有 `SwiftName` 的实体；现在每个列出的实体（含 `SwiftPrivate`）都注册归属——`__C.X` 的 X 是 C 名，归属正确性与 Swift 侧可见性无关。改名表仍跳过 `SwiftPrivate`。
+- **APINotes 归属注册比历史实现更宽**：历史实现只注册有 `SwiftName` 的实体；现在每个列出的实体（含 `SwiftPrivate`）都注册归属——`__C.X` 的 X 是 C 名，归属正确性与 Swift 侧可见性无关。改名表在搬家时改为按 importer 规则收 `SwiftPrivate`（见「这个模块做什么」下的 APINotes 一条）。
 
 ## 已知限制
 
-- 整个 target 是 macOS-only（`#if os(macOS)` 全文件 + 依赖的 `.when(platforms: [.macOS])` 条件），且运行时要求 macOS 13+ 与本机的开发者目录（SDK 与 sourcekitd）。
+- 整个 target 是 macOS-only（`#if os(macOS)` 全文件 + 依赖的 `.when(platforms: [.macOS])` 条件），且运行时要求 macOS 13+ 与本机的开发者目录：macOS 与 Mac Catalyst 有 Command Line Tools 即可，iOS 等其他平台要装了对应 SDK 的 Xcode。
+- 对本机真实 SDK 的核对在 `SDKIntegrationTests`，默认关闭，`TYPE_INDEXING_SDK_TESTS=1 swift test --filter SDKIntegrationTests` 手动跑（只读 API notes，约 1.5 秒）。
 - Identifier 重写只覆盖类型引用（`printType` 的 nominal 路径）；成员级 SwiftName 改名（selector → Swift 方法名等）不在本案，另立提案。
 - 依赖 image 的模块名取自 image 文件名（`libobjc.A.dylib` → `libobjc`），与 Swift module 名在少数 dylib 上不一致；影响仅限私有类型归属的显示名。
 - **声明模块完全不在依赖列表里时三层全 miss**：类型只出现在签名 / 元数据、二进制没有对该框架的任何符号引用时，链接器不会记 `LC_LOAD_DYLIB`（探针实测：只声明 `CGContext` 字段而不调 CG 函数，CoreGraphics 就不在依赖里），依赖过滤自然不会索引该模块，`__C.` 原样保留。真实二进制里用一个类型几乎必调它的函数（或至少链 overlay），所以实际影响很小；若将来遇到，可选增强是把过滤集合扩到依赖闭包（传递依赖）。用户自备的补充映射（提案 0010）不受此限：它不参与依赖过滤，条目覆盖到就能解析——SDK 里根本没有模块的私有框架（AttributeGraph）正是靠它。

@@ -4,7 +4,15 @@ import APINotes
 import Foundation
 
 /// The name mappings mined from a set of `.apinotes` files: C name ↔ Swift
-/// name (for `SwiftName` renames) and C name → declaring module.
+/// name (for `SwiftName` renames and `SwiftPrivate` types) and C name →
+/// declaring module.
+///
+/// The Swift name follows the Clang importer (`ImportName.cpp`): a
+/// `SwiftName` is used as is — the importer returns before it looks at
+/// `swift_private` — and only without one does `SwiftPrivate: true` prefix
+/// `__` to the C name. UIKit's `UICellConfigurationState` (`SwiftPrivate`)
+/// imports as `__UICellConfigurationState`; PencilKit's `PKDrawing`
+/// (`SwiftName: PKDrawingReference`) as `PKDrawingReference`.
 ///
 /// Rename tables are split **per declaration category**, because a C name is
 /// only unique per category: ObjC declares both a class and a protocol named
@@ -35,7 +43,9 @@ struct APINotesIndex: Sendable {
     private(set) var protocolSwiftNamesByCName: [String: Name] = [:]
 
     /// C tag / enumerator / typedef name → renamed Swift name, e.g.
-    /// `NSActivityOptions` → `ProcessInfo.ActivityOptions`.
+    /// `NSActivityOptions` → `ProcessInfo.ActivityOptions`. Enumerators enter
+    /// by `SwiftName` only: they are not types, and a `SwiftPrivate`
+    /// enumerator's `__` follows enum-case rules no type lookup needs.
     private(set) var valueTypeSwiftNamesByCName: [String: Name] = [:]
 
     /// Renamed Swift name → original C name, all categories merged (renamed
@@ -45,8 +55,8 @@ struct APINotesIndex: Sendable {
     /// C name → declaring module, for **every** listed entity, renamed or
     /// not. An APINotes file is the compiler's own record of which module a C
     /// declaration belongs to, so attribution registers unconditionally —
-    /// including `SwiftPrivate` entities, whose C name still appears in
-    /// manglings even though their Swift spelling is underscored.
+    /// including `SwiftPrivate` entities, whose C name is what manglings
+    /// record.
     private(set) var moduleNamesByCName: [String: String] = [:]
 
     init(files: [APINotesFile]) {
@@ -63,7 +73,7 @@ struct APINotesIndex: Sendable {
             registerEntities(module.classes, declaredIn: file.moduleName, into: \.classSwiftNamesByCName)
             registerEntities(module.protocols, declaredIn: file.moduleName, into: \.protocolSwiftNamesByCName)
             registerEntities(module.tags, declaredIn: file.moduleName, into: \.valueTypeSwiftNamesByCName)
-            registerEntities(module.enumerators, declaredIn: file.moduleName, into: \.valueTypeSwiftNamesByCName)
+            registerEntities(module.enumerators, declaredIn: file.moduleName, into: \.valueTypeSwiftNamesByCName, prefixesSwiftPrivateNames: false)
             registerEntities(module.typedefs, declaredIn: file.moduleName, into: \.valueTypeSwiftNamesByCName)
         }
     }
@@ -107,16 +117,32 @@ struct APINotesIndex: Sendable {
     private mutating func registerEntities(
         _ entities: [some CommonEntity]?,
         declaredIn moduleName: String,
-        into renameTable: WritableKeyPath<Self, [String: Name]>
+        into renameTable: WritableKeyPath<Self, [String: Name]>,
+        prefixesSwiftPrivateNames: Bool = true
     ) {
         guard let entities else { return }
         for entity in entities {
             let cName = entity.name
             moduleNamesByCName[cName] = moduleName
-            guard let swiftName = entity.swiftName, entity.isSwiftPrivate != true else { continue }
+            // A rename to the C name itself stays: ObjectiveC's entry renames
+            // `NSObject` to `NSObject`, and that spelling is what keeps the
+            // class in ObjectiveC against other modules' listings.
+            guard let swiftName = Self.swiftName(of: entity, prefixesSwiftPrivateNames: prefixesSwiftPrivateNames) else { continue }
             self[keyPath: renameTable][cName] = Name(moduleName: moduleName, name: swiftName)
             cNamesBySwiftName[swiftName] = Name(moduleName: moduleName, name: cName)
         }
+    }
+
+    /// The name Swift imports `entity` under, when its API notes give it one:
+    /// its `SwiftName`, else `__` and its C name when it is `SwiftPrivate`.
+    static func swiftName(of entity: some CommonEntity, prefixesSwiftPrivateNames: Bool = true) -> String? {
+        if let explicitSwiftName = entity.swiftName, !explicitSwiftName.isEmpty {
+            return explicitSwiftName
+        }
+        if prefixesSwiftPrivateNames, entity.isSwiftPrivate == true {
+            return "__" + entity.name
+        }
+        return nil
     }
 }
 

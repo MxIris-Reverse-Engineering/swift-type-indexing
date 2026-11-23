@@ -14,7 +14,9 @@ struct ModuleInterfaceIndexer: Sendable {
     let platform: SDKPlatform
     let sdkSettings: SDKSettings
     let cache: ModuleIndexCache
-    private let generateInterface: InterfaceGenerator
+    /// `nil` when the developer directory has no sourcekitd: the indexer
+    /// then serves cached entries only.
+    private let generateInterface: InterfaceGenerator?
 
     init(platform: SDKPlatform, sdkSettings: SDKSettings, cache: ModuleIndexCache, sourceKitManager: SourceKitManager) {
         self.init(platform: platform, sdkSettings: sdkSettings, cache: cache) { moduleName in
@@ -22,10 +24,11 @@ struct ModuleInterfaceIndexer: Sendable {
         }
     }
 
-    /// Test seam: substitutes the sourcekitd-backed generation with an
-    /// arbitrary closure, so the cache-write discipline (partial entries are
-    /// never stored) is testable without sourcekitd.
-    init(platform: SDKPlatform, sdkSettings: SDKSettings, cache: ModuleIndexCache, interfaceGenerator: @escaping InterfaceGenerator) {
+    /// Substitutes the sourcekitd-backed generation with an arbitrary
+    /// closure — the seam tests use to check the cache-write discipline
+    /// (partial entries are never stored) without sourcekitd — or with `nil`,
+    /// which serves cached entries only and generates nothing.
+    init(platform: SDKPlatform, sdkSettings: SDKSettings, cache: ModuleIndexCache, interfaceGenerator: InterfaceGenerator?) {
         self.platform = platform
         self.sdkSettings = sdkSettings
         self.cache = cache
@@ -43,6 +46,9 @@ struct ModuleInterfaceIndexer: Sendable {
     func indexEntry(forModuleNamed moduleName: String) async -> ModuleIndexCacheEntry? {
         if let cachedEntry = cache.entry(forModuleNamed: moduleName) {
             return cachedEntry
+        }
+        guard let generateInterface else {
+            return nil
         }
         do {
             let interface = try await generateInterface(moduleName)

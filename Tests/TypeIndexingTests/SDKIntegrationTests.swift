@@ -1,0 +1,51 @@
+#if os(macOS)
+
+import Foundation
+import Testing
+@testable import TypeIndexing
+
+/// Against the SDKs of this Mac's active developer directory. Off by default
+/// — the results depend on which SDKs are installed — and run by hand:
+///
+/// ```bash
+/// TYPE_INDEXING_SDK_TESTS=1 swift test --filter SDKIntegrationTests
+/// ```
+///
+/// Only API notes are read (`moduleFilter` selects no module), so no
+/// sourcekitd work runs and nothing is written outside a temporary directory.
+@Suite(.enabled(if: ProcessInfo.processInfo.environment["TYPE_INDEXING_SDK_TESTS"] == "1"))
+struct SDKIntegrationTests {
+    private static func indexedDatabase(for platform: SDKPlatform) async throws -> TypeDatabase {
+        let cacheDirectoryURL = FileManager.default.temporaryDirectory
+            .appending(component: "SDKIntegrationTests-\(UUID().uuidString)")
+        let typeDatabase = TypeDatabase(platform: platform, cacheDirectory: cacheDirectoryURL)
+        try await typeDatabase.index(dependencies: [], moduleFilter: { _ in false })
+        try? FileManager.default.removeItem(at: cacheDirectoryURL)
+        return typeDatabase
+    }
+
+    /// The case that started the package: Mac Catalyst UIKit's bridged
+    /// configuration state, `SwiftPrivate: true` in UIKit's API notes.
+    @Test
+    func macCatalystUIKitSwiftPrivateClassResolves() async throws {
+        let typeDatabase = try await Self.indexedDatabase(for: .macCatalyst)
+        #expect(await typeDatabase.moduleName(forTypeName: "UICellConfigurationState") == "UIKit")
+        #expect(await typeDatabase.swiftName(forCName: "UICellConfigurationState", category: .objcClass) == "__UICellConfigurationState")
+    }
+
+    /// PencilKit's drawing, `SwiftName: PKDrawingReference` in its API notes.
+    @Test
+    func macOSPencilKitSwiftNameResolves() async throws {
+        let typeDatabase = try await Self.indexedDatabase(for: .macOS)
+        #expect(await typeDatabase.moduleName(forTypeName: "PKDrawing") == "PencilKit")
+        #expect(await typeDatabase.swiftName(forCName: "PKDrawing", category: .objcClass) == "PKDrawingReference")
+    }
+
+    @Test
+    func macOSDoesNotSeeMacCatalystUIKit() async throws {
+        let typeDatabase = try await Self.indexedDatabase(for: .macOS)
+        #expect(await typeDatabase.swiftName(forCName: "UICellConfigurationState", category: .objcClass) == nil)
+    }
+}
+
+#endif

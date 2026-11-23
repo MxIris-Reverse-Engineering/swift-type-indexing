@@ -27,6 +27,10 @@ import FoundationToolbox
 public actor TypeDatabase {
     private let platform: SDKPlatform
 
+    /// Where the module-interface cache lives; `nil` for the package's own
+    /// directory in Application Support.
+    private let cacheDirectoryURL: URL?
+
     /// User-supplied supplementary API notes locations (files or directories),
     /// loaded after the SDK's own so they overwrite them. The package ships no
     /// mappings of its own.
@@ -61,8 +65,20 @@ public actor TypeDatabase {
     /// Image paths ever registered, so a repeated registration adds nothing.
     private var registeredDependencyImagePaths: Set<String> = []
 
-    public init(platform: SDKPlatform, supplementaryAPINotesURLs: [URL] = []) {
+    /// Whether the missing sourcekitd was logged, so it is logged once.
+    private var hasLoggedMissingSourceKit = false
+
+    /// - Parameters:
+    ///   - platform: The SDK whose API notes and module interfaces are read.
+    ///   - cacheDirectory: The directory the module-interface cache is kept
+    ///     in, one subdirectory per platform and SDK build. `nil` keeps it in
+    ///     `~/Library/Application Support/swift-type-indexing/SDKIndexer`.
+    ///   - supplementaryAPINotesURLs: `.apinotes` files, or directories of
+    ///     them, loaded after the SDK's own so they overwrite them — mappings
+    ///     for frameworks the SDK has no module for.
+    public init(platform: SDKPlatform, cacheDirectory: URL? = nil, supplementaryAPINotesURLs: [URL] = []) {
         self.platform = platform
+        self.cacheDirectoryURL = cacheDirectory
         self.supplementaryAPINotesURLs = supplementaryAPINotesURLs
     }
 
@@ -76,18 +92,24 @@ public actor TypeDatabase {
     /// it has not indexed yet (expensive, cached per module per SDK build) and
     /// appends the dependency images it has not seen. Throws only when the
     /// platform's SDK cannot be found; a module whose interface cannot be
-    /// generated is skipped.
+    /// generated is skipped. Without sourcekitd only the modules already in
+    /// the cache contribute interface names.
     public func index(dependencies: [any DeclaredTypeNameSource], moduleFilter: @Sendable (String) -> Bool) async throws {
         let (sdkSettings, discovery) = try discoverSDK()
 
         let modulesToIndex = discovery.modules.filter { moduleFilter($0.moduleName) && !indexedModuleNames.contains($0.moduleName) }
         indexedModuleNames.formUnion(modulesToIndex.map(\.moduleName))
-        let moduleInterfaceIndexer = ModuleInterfaceIndexer(
-            platform: platform,
-            sdkSettings: sdkSettings,
-            cache: ModuleIndexCache(platform: platform, sdkSettings: sdkSettings),
-            sourceKitManager: sourceKitManager
-        )
+        let cache = ModuleIndexCache(platform: platform, sdkSettings: sdkSettings, rootDirectoryURL: cacheDirectoryURL)
+        let moduleInterfaceIndexer: ModuleInterfaceIndexer
+        if SourceKitLocator.activeSourceKitPath() != nil {
+            moduleInterfaceIndexer = ModuleInterfaceIndexer(platform: platform, sdkSettings: sdkSettings, cache: cache, sourceKitManager: sourceKitManager)
+        } else {
+            if !hasLoggedMissingSourceKit {
+                hasLoggedMissingSourceKit = true
+                #log(.info, "No sourcekitd in the active developer directory; module interfaces come from the cache only")
+            }
+            moduleInterfaceIndexer = ModuleInterfaceIndexer(platform: platform, sdkSettings: sdkSettings, cache: cache, interfaceGenerator: nil)
+        }
         let collectedEntries = await withTaskGroup(of: ModuleIndexCacheEntry?.self) { group in
             for moduleDescriptor in modulesToIndex {
                 group.addTask {
