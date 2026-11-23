@@ -265,6 +265,21 @@ public actor TypeDatabase {
         return nil
     }
 
+    /// What API notes say about how Swift imports the Objective-C class
+    /// `className` and its members, or `nil` when they say nothing.
+    ///
+    /// Comes from API notes alone, so an ``index(dependencies:moduleFilter:)``
+    /// call that indexes no module (`moduleFilter` returning `false`) is
+    /// enough, and needs no sourcekitd.
+    public func swiftImportAnnotations(forObjCClassNamed className: String) -> ObjCContainerSwiftImportAnnotations? {
+        apiNotesIndex.swiftImportAnnotations(forObjCClassNamed: className)
+    }
+
+    /// The same for the Objective-C protocol `protocolName`.
+    public func swiftImportAnnotations(forObjCProtocolNamed protocolName: String) -> ObjCContainerSwiftImportAnnotations? {
+        apiNotesIndex.swiftImportAnnotations(forObjCProtocolNamed: protocolName)
+    }
+
     // MARK: - Runtime Metadata
 
     private func registerDeclaredTypeNames(of dependency: any DeclaredTypeNameSource) async {

@@ -59,6 +59,16 @@ struct APINotesIndex: Sendable {
     /// record.
     private(set) var moduleNamesByCName: [String: String] = [:]
 
+    /// Objective-C class name → the naming annotations of the class and its
+    /// members. Merged across files: several modules list `NSObject` to
+    /// annotate their category methods, so members accumulate, a later file
+    /// winning per member, and a listing without a class-level annotation
+    /// keeps the earlier one.
+    private(set) var classSwiftImportAnnotationsByName: [String: ObjCContainerSwiftImportAnnotations] = [:]
+
+    /// Objective-C protocol name → the same, for protocols.
+    private(set) var protocolSwiftImportAnnotationsByName: [String: ObjCContainerSwiftImportAnnotations] = [:]
+
     init(files: [APINotesFile]) {
         register(files: files)
     }
@@ -75,6 +85,8 @@ struct APINotesIndex: Sendable {
             registerEntities(module.tags, declaredIn: file.moduleName, into: \.valueTypeSwiftNamesByCName)
             registerEntities(module.enumerators, declaredIn: file.moduleName, into: \.valueTypeSwiftNamesByCName, prefixesSwiftPrivateNames: false)
             registerEntities(module.typedefs, declaredIn: file.moduleName, into: \.valueTypeSwiftNamesByCName)
+            registerSwiftImportAnnotations(of: module.classes, into: \.classSwiftImportAnnotationsByName)
+            registerSwiftImportAnnotations(of: module.protocols, into: \.protocolSwiftImportAnnotationsByName)
         }
     }
 
@@ -112,6 +124,56 @@ struct APINotesIndex: Sendable {
 
     func moduleName(forCName cName: String) -> String? {
         moduleNamesByCName[cName]
+    }
+
+    func swiftImportAnnotations(forObjCClassNamed className: String) -> ObjCContainerSwiftImportAnnotations? {
+        classSwiftImportAnnotationsByName[className]
+    }
+
+    func swiftImportAnnotations(forObjCProtocolNamed protocolName: String) -> ObjCContainerSwiftImportAnnotations? {
+        protocolSwiftImportAnnotationsByName[protocolName]
+    }
+
+    private mutating func registerSwiftImportAnnotations(
+        of containers: [some ObjCContext]?,
+        into annotationTable: WritableKeyPath<Self, [String: ObjCContainerSwiftImportAnnotations]>
+    ) {
+        guard let containers else { return }
+        for container in containers {
+            var annotations = self[keyPath: annotationTable][container.name] ?? ObjCContainerSwiftImportAnnotations()
+            if let declarationAnnotation = Self.swiftImportAnnotation(of: container) {
+                annotations.declaration = declarationAnnotation
+            }
+            for method in container.methods ?? [] {
+                guard let methodAnnotation = Self.swiftImportAnnotation(of: method) else { continue }
+                annotations.members[.method(selector: method.selector, isClassMethod: method.kind == .class)] = methodAnnotation
+            }
+            for property in container.properties ?? [] {
+                guard let propertyAnnotation = Self.swiftImportAnnotation(of: property) else { continue }
+                // Without `PropertyKind` an entry names both the instance and
+                // the class property, as Clang's API notes compiler reads it.
+                let classPropertyFlags: [Bool] = switch property.kind {
+                case .instance: [false]
+                case .class: [true]
+                case nil: [false, true]
+                }
+                for isClassProperty in classPropertyFlags {
+                    annotations.members[.property(name: property.name, isClassProperty: isClassProperty)] = propertyAnnotation
+                }
+            }
+            if !annotations.isEmpty {
+                self[keyPath: annotationTable][container.name] = annotations
+            }
+        }
+    }
+
+    /// The naming annotation an API notes entry carries, or `nil` when it has
+    /// neither a `SwiftName` nor `SwiftPrivate: true`.
+    static func swiftImportAnnotation(of entity: some CommonEntity) -> SwiftImportAnnotation? {
+        let swiftName = entity.swiftName.flatMap { $0.isEmpty ? nil : $0 }
+        let isSwiftPrivate = entity.isSwiftPrivate == true
+        guard swiftName != nil || isSwiftPrivate else { return nil }
+        return SwiftImportAnnotation(swiftName: swiftName, isSwiftPrivate: isSwiftPrivate)
     }
 
     private mutating func registerEntities(

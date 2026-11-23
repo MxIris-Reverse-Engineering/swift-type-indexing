@@ -62,6 +62,20 @@ struct MacCatalystPlatformTests {
         #expect(sdkSettings.targetTriple(for: .macCatalyst).hasSuffix("-apple-ios27.2-macabi"))
     }
 
+    /// sourcekitd takes its arguments as a frontend invocation, without the
+    /// driver that adds a Mac Catalyst target's iOSSupport frameworks: without
+    /// them UIKit's interface failed with "Could not load module: UIKit".
+    @Test
+    func macCatalystInterfaceGenerationSeesIOSSupportFrameworks() {
+        let sdkSettings = SDKSettings(sdkPath: "/SDKs/MacOSX.sdk", version: "27.2", productBuildVersion: nil)
+        let catalystArguments = sdkSettings.compilerArguments(for: .macCatalyst)
+        #expect(catalystArguments.starts(with: ["-sdk", "/SDKs/MacOSX.sdk", "-target"]))
+        #expect(catalystArguments.contains("/SDKs/MacOSX.sdk/System/iOSSupport/System/Library/Frameworks"))
+        let frameworkFlagIndex = catalystArguments.firstIndex(of: "-Fsystem")
+        #expect(frameworkFlagIndex.map { catalystArguments[$0 + 1] } == "/SDKs/MacOSX.sdk/System/iOSSupport/System/Library/Frameworks")
+        #expect(!sdkSettings.compilerArguments(for: .macOS).contains("-Fsystem"))
+    }
+
     /// Mac Catalyst caches apart from macOS: the same SDK yields different
     /// module interfaces for the two targets.
     @Test

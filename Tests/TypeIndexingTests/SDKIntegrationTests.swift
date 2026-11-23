@@ -41,6 +41,31 @@ struct SDKIntegrationTests {
         #expect(await typeDatabase.swiftName(forCName: "PKDrawing", category: .objcClass) == "PKDrawingReference")
     }
 
+    /// The annotations an Objective-C header printer marks: the class-level
+    /// `SwiftName` of PencilKit's drawing, and the `SwiftPrivate` of Mac
+    /// Catalyst UIKit's configuration state.
+    @Test
+    func objcSwiftImportAnnotationsComeFromTheSDK() async throws {
+        let macOSDatabase = try await Self.indexedDatabase(for: .macOS)
+        #expect(await macOSDatabase.swiftImportAnnotations(forObjCClassNamed: "PKDrawing")?.declaration?.swiftName == "PKDrawingReference")
+        let macCatalystDatabase = try await Self.indexedDatabase(for: .macCatalyst)
+        #expect(await macCatalystDatabase.swiftImportAnnotations(forObjCClassNamed: "UICellConfigurationState")?.declaration?.isSwiftPrivate == true)
+    }
+
+    /// Module interfaces through sourcekitd, for a type no API notes file
+    /// lists. Slow — the first generation of UIKit's interface takes tens of
+    /// seconds — so it needs `TYPE_INDEXING_SOURCEKIT_TESTS=1` as well.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["TYPE_INDEXING_SOURCEKIT_TESTS"] == "1"))
+    func macCatalystModuleInterfaceAttributesUIKitTypes() async throws {
+        let cacheDirectoryURL = FileManager.default.temporaryDirectory
+            .appending(component: "SDKIntegrationTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: cacheDirectoryURL) }
+        let typeDatabase = TypeDatabase(platform: .macCatalyst, cacheDirectory: cacheDirectoryURL)
+        try await typeDatabase.index(dependencies: [], moduleFilter: { $0 == "UIKit" })
+        // UIStackView is listed in no API notes file: only the interface names it.
+        #expect(await typeDatabase.moduleName(forTypeName: "UIStackView") == "UIKit")
+    }
+
     @Test
     func macOSDoesNotSeeMacCatalystUIKit() async throws {
         let typeDatabase = try await Self.indexedDatabase(for: .macOS)

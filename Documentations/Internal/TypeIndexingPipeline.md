@@ -22,6 +22,16 @@ swiftName(forCName: "CFStringRef", category:)   ← identifier 重写（见下�
     2. CF `Ref` 剥除规则（剥后名必须存在于归属表；protocol 类别不适用）
 ```
 
+## ObjC 头文件的 Swift 命名标注
+
+`swiftImportAnnotations(forObjCClassNamed:)` / `forObjCProtocolNamed:` 给 Objective-C 头文件的打印方（MachOObjCSection）用：类或协议本身、以及它的方法与属性在 API notes 里的 `SwiftName` / `SwiftPrivate`，打印时还原成 `NS_SWIFT_NAME(...)` / `NS_REFINED_FOR_SWIFT`。
+
+- 只来自 API notes，不需要 sourcekitd；`index` 用一个不选任何模块的 `moduleFilter` 调一次就够。
+- 只登记带了这两个属性之一的条目。成员的键与 API notes 一致：方法按 selector 加类 / 实例方法，属性按名字加类 / 实例属性；属性条目不写 `PropertyKind` 时同时算实例与类属性（clang 的 `APINotesYAMLCompiler.cpp` 就是这样读的）。
+- 跨文件合并：几个模块的 API notes 为了标注自己的 category 方法都会列 `NSObject`，成员逐个累加、后读的文件按成员覆盖；没写类本身标注的列法不会抹掉先前的类标注。
+- 存的是原始的两个属性，不是推导后的 Swift 名：成员一级要打印的是宏。
+- 依赖 swift-apinotes 0.3.0：此前它的 `ObjCContext.methods` / `properties` 是 internal，包外读不到。
+
 ## Identifier 重写：C 拼写 → Swift 拼写（用户指正驱动）
 
 module 名替换之外，`__C` 类型的 **identifier 本身**也可能是 Swift 里不存在的 C 拼写——首轮端到端输出的 `CoreFoundation.CFStringRef` 被用户指正：`CFStringRef` 是 C 侧 typedef 名，ClangImporter 剥 `Ref` 后缀桥接为原生 class `CFString`。落地为打印侧对 `swiftName(forCName:category:)` 的消费（该协议方法此前零消费者）：
@@ -52,7 +62,7 @@ AttributeGraph 这类私有框架在 SDK 里没有任何模块（无头文件、
 
 | 类型 | 职责 | 关键点 |
 |---|---|---|
-| `SDKPlatform` / `SDKSettings` | 平台 → SDK 路径、target triple、SDK 版本标识 | `SDKSettings.plist` 的 `Version` + `ProductBuildVersion` 组成缓存目录段；`macCatalyst` 没有自己的 SDK：读 macOS SDK（`xcrunSDKName`），target 是 `ios<SupportedTargets.iosmac.DefaultDeploymentTarget>-macabi`，缓存目录与 macOS 分开 |
+| `SDKPlatform` / `SDKSettings` | 平台 → SDK 路径、target triple、SDK 版本标识 | `SDKSettings.plist` 的 `Version` + `ProductBuildVersion` 组成缓存目录段；`macCatalyst` 没有自己的 SDK：读 macOS SDK（`xcrunSDKName`），target 是 `ios<SupportedTargets.iosmac.DefaultDeploymentTarget>-macabi`，缓存目录与 macOS 分开；`compilerArguments(for:)` 给 Catalyst 显式补 `-Fsystem <SDK>/System/iOSSupport/System/Library/Frameworks` 与 `-I <SDK>/System/iOSSupport/usr/include`——sourcekitd 按前端调用解析参数，没有替 macabi target 加这些路径的驱动，缺了 UIKit 报 `Could not load module: UIKit` |
 | `Subprocess` | `xcrun` / `xcode-select -p` 同步调用 | 非零退出码抛错，不再静默返回空串 |
 | `SourceKitLocator` | 在开发者目录里找 sourcekitd | 先试 Xcode 的 `Toolchains/XcodeDefault.xctoolchain/usr/lib/…`，再试 Command Line Tools 的 `usr/lib/…`（没有 `Toolchains` 一层）；两者都是 `sourcekitd.framework/Versions/A/sourcekitd` |
 | `TypeIndexingAvailability` | 某平台能不能索引、为什么不能 | 要开发者目录与该平台的 SDK；sourcekitd 可缺（缺了只少模块接口一层） |
@@ -104,7 +114,7 @@ TypeIndexing 的类型都标 `@available(macOS 13.0, *)`（包部署下限是 ma
 ## 已知限制
 
 - 整个 target 是 macOS-only（`#if os(macOS)` 全文件 + 依赖的 `.when(platforms: [.macOS])` 条件），且运行时要求 macOS 13+ 与本机的开发者目录：macOS 与 Mac Catalyst 有 Command Line Tools 即可，iOS 等其他平台要装了对应 SDK 的 Xcode。
-- 对本机真实 SDK 的核对在 `SDKIntegrationTests`，默认关闭，`TYPE_INDEXING_SDK_TESTS=1 swift test --filter SDKIntegrationTests` 手动跑（只读 API notes，约 1.5 秒）。
+- 对本机真实 SDK 的核对在 `SDKIntegrationTests`，默认关闭，`TYPE_INDEXING_SDK_TESTS=1 swift test --filter SDKIntegrationTests` 手动跑（只读 API notes，约 2 秒）；再加 `TYPE_INDEXING_SOURCEKIT_TESTS=1` 会经 sourcekitd 冷生成 Catalyst 的 UIKit 接口，2026-11-23 在公司那台 10 核 Mac Studio 上用了 126 秒——这也是使用方第一次索引 UIKit 的代价。
 - Identifier 重写只覆盖类型引用（`printType` 的 nominal 路径）；成员级 SwiftName 改名（selector → Swift 方法名等）不在本案，另立提案。
 - 依赖 image 的模块名取自 image 文件名（`libobjc.A.dylib` → `libobjc`），与 Swift module 名在少数 dylib 上不一致；影响仅限私有类型归属的显示名。
 - **声明模块完全不在依赖列表里时三层全 miss**：类型只出现在签名 / 元数据、二进制没有对该框架的任何符号引用时，链接器不会记 `LC_LOAD_DYLIB`（探针实测：只声明 `CGContext` 字段而不调 CG 函数，CoreGraphics 就不在依赖里），依赖过滤自然不会索引该模块，`__C.` 原样保留。真实二进制里用一个类型几乎必调它的函数（或至少链 overlay），所以实际影响很小；若将来遇到，可选增强是把过滤集合扩到依赖闭包（传递依赖）。用户自备的补充映射（提案 0010）不受此限：它不参与依赖过滤，条目覆盖到就能解析——SDK 里根本没有模块的私有框架（AttributeGraph）正是靠它。

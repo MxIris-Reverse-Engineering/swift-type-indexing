@@ -86,10 +86,7 @@ actor SourceKitManager {
             keys.moduleName: moduleName,
             keys.name: UUID().uuidString,
             keys.enableStructure: 1,
-            keys.compilerArgs: [
-                "-sdk", sdkSettings.sdkPath,
-                "-target", sdkSettings.targetTriple(for: platform),
-            ] as [any SKDRequestValue],
+            keys.compilerArgs: sdkSettings.compilerArguments(for: platform) as [any SKDRequestValue],
         ])
         let response = try await sourcekitd.send(
             \.editorOpenInterface,

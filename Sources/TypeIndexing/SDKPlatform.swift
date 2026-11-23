@@ -101,6 +101,23 @@ public struct SDKSettings: Sendable, Hashable {
         return version
     }
 
+    /// The compiler arguments a module interface of `platform` is generated
+    /// with. sourcekitd takes them as a frontend invocation, without the
+    /// driver that adds a Mac Catalyst target's `System/iOSSupport`
+    /// frameworks — without them `import UIKit` fails with "Could not load
+    /// module" — so they are passed here.
+    func compilerArguments(for platform: SDKPlatform) -> [String] {
+        var arguments = ["-sdk", sdkPath, "-target", targetTriple(for: platform)]
+        if platform == .macCatalyst {
+            let iOSSupportPath = URL(fileURLWithPath: sdkPath).appending(path: "System/iOSSupport")
+            arguments += [
+                "-Fsystem", iOSSupportPath.appending(path: "System/Library/Frameworks").path(percentEncoded: false),
+                "-I", iOSSupportPath.appending(path: "usr/include").path(percentEncoded: false),
+            ]
+        }
+        return arguments
+    }
+
     /// The compiler target triple for `platform` at this SDK's version, for
     /// the host architecture.
     func targetTriple(for platform: SDKPlatform) -> String {
