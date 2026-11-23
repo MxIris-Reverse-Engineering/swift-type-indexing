@@ -66,7 +66,7 @@ AttributeGraph 这类私有框架在 SDK 里没有任何模块（无头文件、
 | `Subprocess` | `xcrun` / `xcode-select -p` 同步调用 | 非零退出码抛错，不再静默返回空串 |
 | `SourceKitLocator` | 在开发者目录里找 sourcekitd | 先试 Xcode 的 `Toolchains/XcodeDefault.xctoolchain/usr/lib/…`，再试 Command Line Tools 的 `usr/lib/…`（没有 `Toolchains` 一层）；两者都是 `sourcekitd.framework/Versions/A/sourcekitd` |
 | `TypeIndexingAvailability` | 某平台能不能索引、为什么不能 | 要开发者目录与该平台的 SDK；sourcekitd 可缺（缺了只少模块接口一层） |
-| `SourceKitManager` | actor：sourcekitd 请求 + 响应转值类型 | dylib 路径经 `SourceKitLocator` 从 active developer dir 派生（不再硬编码 `/Applications/Xcode.app`）；substructure 在 actor 内转成 `InterfaceDeclarationNode` 值树；`importedModuleNames` 是行级 import 扫描 |
+| `SourceKitManager` | actor：接口的打开、关闭与并发上限 | **每个打开的接口都用同一个文档名 `editor.close`，生成失败也关**；同时最多生成 `defaultMaximumConcurrentGenerations`（2）个。SourceKitService 为每次 `editor.open.interface` 留一个 `SwiftInterfaceGenContext`（两个 `CompilerInstance`，载入该模块及其导入的全部模块，SDK framework 约 1 GB），只有同名的 `editor.close` 才释放；不关时一个服务进程活多久就攒多久——为 AppKit 的依赖建索引 6 秒到 27 GB，RuntimeViewer 两个服务进程各到 80 GB。请求经 `InterfaceDocumentService` 协议发出，`SourceKitManagerTests` 用替身核对配对与并发；sourcekitd 那一侧是 `SourceKitDInterfaceDocumentService`：dylib 路径经 `SourceKitLocator` 从 active developer dir 派生（不再硬编码 `/Applications/Xcode.app`），substructure 在返回前转成 `InterfaceDeclarationNode` 值树；`importedModuleNames` 是行级 import 扫描 |
 | `InterfaceDeclarationNode` | substructure 的值类型投影 | `other` 节点的子树在转换时即丢弃 |
 | `InterfaceTypeNameExtractor` | 值树 → fully-qualified 类型名（纯函数） | extension 节点用被扩展类型名（可带点）作限定前缀、自身不入清单——旧 SwiftSyntax 解析器的 extension 嵌套键错误在此结构性消失 |
 | `SDKIndexer` | SDK 文件发现（秒级，零 sourcekitd） | `.swiftmodule` 目录 `skipDescendants`；同名模块先到先得（search path 优先级）；`macCatalyst` 先搜 `System/iOSSupport/…` 再搜 macOS 的同名目录 |
@@ -95,6 +95,7 @@ AttributeGraph 这类私有框架在 SDK 里没有任何模块（无头文件、
 
 - SDK 扫描只做文件发现，秒级；sourcekitd 生成只对**依赖过滤命中的模块**进行（历史实现对全 SDK 数百模块逐个生成、过滤在其后，首次索引小时级——这是该 target 当年被禁用的直接原因）。
 - 首个未命中缓存的模块仍要付一次真实生成成本（大模块数秒到数十秒）；同 SDK 下第二次起走缓存。
+- SourceKitService 的内存由同时在生成的接口数决定，每个约 1 GB：生成完立即关闭，并发上限 2。量法：`swift-section interface --uses-system-dyld-shared-cache -n AppKit --resolve-c-module-names`，先清空默认缓存目录，按秒采样新起的 SourceKitService 的 RSS。
 - ObjC 懒索引把依赖 image 的解析成本压到「前两层查不到」的路径上；`ObjCInterfaceIndexer.prepare()` 解析全部成员 info，对单个大 framework 不算轻——若实测过重，未来方向是在 MachOObjCSection 加 name-only 快速路径。
 
 ## 降级行为（0005 事件化纪律的落点）
