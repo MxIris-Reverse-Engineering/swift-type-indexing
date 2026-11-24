@@ -11,7 +11,7 @@ the active developer directory; it reads no Mach-O file. How the pipeline works 
 its shape: `Documentations/Internal/TypeIndexingPipeline.md` — read it before changing a source file.
 
 It came out of MachOSwiftSection, which holds the proposal that moved it
-(`draft-swift-type-indexing-package` in MachOSwiftSection's `Documentations/Evolutions/`).
+([0105-swift-type-indexing-package](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/0105-swift-type-indexing-package.md) in MachOSwiftSection's `Documentations/Evolutions/`).
 
 ## Rules
 

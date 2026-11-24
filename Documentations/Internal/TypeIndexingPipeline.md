@@ -1,6 +1,6 @@
 # TypeIndexing：`__C` 类型的归属与 Swift 名索引实现说明
 
-> 面向维护者的实现说明：管线、缓存布局与已知降级。本模块原是 MachOSwiftSection 的 `TypeIndexing` target，由它的跨仓库提案《类型索引独立成 swift-type-indexing 包》（`draft-swift-type-indexing-package`）搬到这里；此前的设计来历见 MachOSwiftSection 的提案 [0009](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/0009-type-indexing-revival.md)（TypeIndexing 重启）与 [0010](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/0010-community-type-mapping-bundles.md)（补充映射），文中「提案 0009 / 0010 / 0023」都指 MachOSwiftSection 的提案。
+> 面向维护者的实现说明：管线、缓存布局与已知降级。本模块原是 MachOSwiftSection 的 `TypeIndexing` target，由它的跨仓库提案[0105《类型索引独立成 swift-type-indexing 包》](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/0105-swift-type-indexing-package.md)搬到这里；此前的设计来历见 MachOSwiftSection 的提案 [0009](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/0009-type-indexing-revival.md)（TypeIndexing 重启）与 [0010](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/0010-community-type-mapping-bundles.md)（补充映射），文中「提案 0009 / 0010 / 0023」都指 MachOSwiftSection 的提案。
 
 ## 这个模块做什么
 
