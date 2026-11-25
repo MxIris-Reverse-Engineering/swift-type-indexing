@@ -80,7 +80,7 @@ try. To print resolved names in Swift interfaces, use
 ## Installation
 
 ```swift
-.package(url: "https://github.com/MxIris-Reverse-Engineering/swift-type-indexing", from: "0.1.0"),
+.package(url: "https://github.com/MxIris-Reverse-Engineering/swift-type-indexing", from: "0.2.0"),
 ```
 
 ```swift
