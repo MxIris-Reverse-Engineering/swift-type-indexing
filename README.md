@@ -16,7 +16,16 @@ with `NS_SWIFT_NAME`, or hidden with `NS_REFINED_FOR_SWIFT`, mangles exactly lik
 | `__C.CFStringRef` | `CoreFoundation.CFString` | the CF bridge strips `Ref` |
 
 It also tells an Objective-C header printer which classes, protocols and members carry
-`NS_SWIFT_NAME(...)` or `NS_REFINED_FOR_SWIFT`.
+`NS_SWIFT_NAME(...)` or `NS_REFINED_FOR_SWIFT`, and which module declares a Swift type the SDK moved
+between modules:
+
+| Mangled | Declared in | Why |
+|---|---|---|
+| `CoreGraphics.CGFloat` | `CoreFoundation` | `@_originallyDefinedIn(module: "CoreGraphics", macOS 10.0)` in CoreFoundation's interface |
+| `SwiftUI.View` | `SwiftUICore` (macOS 15 SDK on) | `@_originallyDefinedIn(module: "SwiftUI", macOS 15.0)` in SwiftUICore's interface |
+
+The compiler keeps mangling a moved type under the module it was originally defined in, so a binary
+never says where the type went; the SDK's textual `.swiftinterface` files do.
 
 ## Sources
 
@@ -28,6 +37,9 @@ It also tells an Objective-C header printer which classes, protocols and members
 3. **Runtime metadata** — the types each dependency image declares, through `DeclaredTypeNameSource`.
    This package reads no Mach-O file itself; [MachOObjCSection](https://github.com/MxIris-Reverse-Engineering/MachOObjCSection)'s
    `ObjCTypeIndexing` provides a source over Objective-C metadata.
+
+Moved Swift types come from the textual `.swiftinterface` of every SDK module, scanned on the first
+`index` call; no sourcekitd is involved.
 
 ## Usage
 
@@ -42,12 +54,18 @@ await typeDatabase.moduleName(forTypeName: "UICellConfigurationState")          
 await typeDatabase.swiftName(forCName: "UICellConfigurationState", category: .objcClass) // "__UICellConfigurationState"
 await typeDatabase.swiftImportAnnotations(forObjCClassNamed: "UICellConfigurationState")?.declaration
 // SwiftImportAnnotation(swiftName: nil, isSwiftPrivate: true)
+
+// A moved Swift type, for a binary built with the iOS 18 SDK (its LC_BUILD_VERSION):
+let iOS18 = OperatingSystemVersion(majorVersion: 18, minorVersion: 0, patchVersion: 0)
+await typeDatabase.declaringModuleName(ofMovedTypeNamed: "View", originallyDefinedIn: "SwiftUI", builtAgainst: iOS18)
+// "SwiftUICore"; nil for a binary built before the move
 ```
 
 `TypeIndexingAvailability.availability(for:)` says whether the Mac can index a platform before you
 try. To print resolved names in Swift interfaces, use
 [MachOSwiftSection](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection)'s
-`SwiftTypeNameResolution`, or `swift-section interface --resolve-c-module-names`.
+`SwiftTypeNameResolution`, or `swift-section interface --resolve-c-module-names` and
+`--resolve-moved-type-modules`.
 
 ## Requirements
 
@@ -62,7 +80,7 @@ try. To print resolved names in Swift interfaces, use
 ## Installation
 
 ```swift
-.package(url: "https://github.com/MxIris-Reverse-Engineering/swift-type-indexing", from: "0.1.0"),
+.package(url: "https://github.com/MxIris-Reverse-Engineering/swift-type-indexing", from: "0.2.0"),
 ```
 
 ```swift

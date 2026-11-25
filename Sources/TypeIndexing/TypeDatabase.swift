@@ -20,9 +20,15 @@ import FoundationToolbox
 ///    Consulted only on a miss of the first two, one image at a time, stopping
 ///    at the first image that declares the name.
 ///
+/// It also answers, for a Swift type the SDK moved between modules
+/// (`@_originallyDefinedIn`), which module declares it now:
+/// ``declaringModuleName(ofMovedTypeNamed:originallyDefinedIn:builtAgainst:)``,
+/// read from the textual interfaces of every SDK module.
+///
 /// ``index(dependencies:moduleFilter:)`` may be called more than once: the
-/// SDK is discovered and its API notes registered on the first call, and
-/// every call adds the modules and dependency images it has not seen yet.
+/// SDK is discovered and its API notes and moved types registered on the
+/// first call, and every call adds the modules and dependency images it has
+/// not seen yet.
 @available(macOS 13.0, *)
 public actor TypeDatabase {
     private let platform: SDKPlatform
@@ -50,6 +56,12 @@ public actor TypeDatabase {
     private var runtimeModuleNamesByTypeName: [String: String] = [:]
 
     private var apiNotesIndex = APINotesIndex(files: [])
+
+    /// The Swift types the SDK's modules declare under
+    /// `@_originallyDefinedIn` another module, by the module their mangling
+    /// names and their name. Read from every module's textual interface on
+    /// the first ``index(dependencies:moduleFilter:)`` call.
+    private var movedTypeDeclarationsByKey: [MovedTypeKey: MovedTypeDeclaration] = [:]
 
     /// The SDK's modules and API notes files, discovered on the first
     /// ``index(dependencies:moduleFilter:)`` call.
@@ -138,7 +150,28 @@ public actor TypeDatabase {
         sdkDiscovery = (sdkSettings, discovery)
         register(apiNotesIndex: APINotesIndex(files: discovery.apiNotesFiles))
         register(supplementaryAPINotesFiles: SupplementaryAPINotesLoader.files(atSupplementaryLocations: supplementaryAPINotesURLs))
+        // Every module, not only the ones a binary links: a moved type's
+        // module is often not linked directly (a binary naming `SwiftUI.View`
+        // need not link SwiftUICore), and the scan reads text, no sourcekitd.
+        register(movedTypeDeclarations: MovedTypeIndex.movedTypeDeclarations(inModules: discovery.modules, platform: platform))
         return (sdkSettings, discovery)
+    }
+
+    /// Registers the moves the SDK's interfaces declare. Exposed as a step so
+    /// lookup is unit-testable without an SDK. The first registration of a
+    /// key wins — discovery order, which is the search paths' priority — and
+    /// a second module claiming the same key is logged.
+    func register(movedTypeDeclarations: [MovedTypeDeclaration]) {
+        for movedTypeDeclaration in movedTypeDeclarations {
+            let key = movedTypeDeclaration.key
+            if let registeredDeclaration = movedTypeDeclarationsByKey[key] {
+                if registeredDeclaration.declaringModuleName != movedTypeDeclaration.declaringModuleName {
+                    #log(.info, "\(key.originalModuleName, privacy: .public).\(key.typeName, privacy: .public) is declared moved by both \(registeredDeclaration.declaringModuleName, privacy: .public) and \(movedTypeDeclaration.declaringModuleName, privacy: .public); keeping the first")
+                }
+                continue
+            }
+            movedTypeDeclarationsByKey[key] = movedTypeDeclaration
+        }
     }
 
     /// Restores discovery order over task-group results: the group yields
@@ -278,6 +311,39 @@ public actor TypeDatabase {
     /// The same for the Objective-C protocol `protocolName`.
     public func swiftImportAnnotations(forObjCProtocolNamed protocolName: String) -> ObjCContainerSwiftImportAnnotations? {
         apiNotesIndex.swiftImportAnnotations(forObjCProtocolNamed: protocolName)
+    }
+
+    /// The module that declares the Swift type a mangling names
+    /// `originalModuleName.typeName`, when the SDK moved it there
+    /// (`@_originallyDefinedIn(module: originalModuleName, …)`) no later than
+    /// `sdkVersion` of the database's platform; `nil` when it never moved,
+    /// moved later, or the database is not indexed yet.
+    ///
+    /// The compiler mangles a moved type — and every type nested in it —
+    /// under the module it was originally defined in, on every deployment
+    /// target, so a binary only ever spells `CoreGraphics.CGFloat`; the SDK's
+    /// interfaces spell `CoreFoundation.CGFloat`. Pass the SDK version the
+    /// binary was built with (its `LC_BUILD_VERSION`), so a binary built
+    /// before a move keeps the module its SDK declared the type in:
+    ///
+    /// ```swift
+    /// await typeDatabase.declaringModuleName(ofMovedTypeNamed: "View", originallyDefinedIn: "SwiftUI", builtAgainst: OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0))
+    /// // "SwiftUICore"; nil for a binary built with the macOS 14 SDK
+    /// ```
+    ///
+    /// `typeName` is the top-level type's name; a nested type is looked up by
+    /// its outermost type. Comes from text alone, so an
+    /// ``index(dependencies:moduleFilter:)`` call that indexes no module is
+    /// enough, and needs no sourcekitd.
+    public func declaringModuleName(ofMovedTypeNamed typeName: String, originallyDefinedIn originalModuleName: String, builtAgainst sdkVersion: OperatingSystemVersion) -> String? {
+        guard
+            let movedTypeDeclaration = movedTypeDeclarationsByKey[MovedTypeKey(originalModuleName: originalModuleName, typeName: typeName)],
+            let movedVersion = movedTypeDeclaration.movedVersion(on: platform),
+            PlatformVersion(sdkVersion) >= movedVersion
+        else {
+            return nil
+        }
+        return movedTypeDeclaration.declaringModuleName
     }
 
     // MARK: - Runtime Metadata

@@ -42,6 +42,36 @@ public enum SDKPlatform: String, CaseIterable, Hashable, Codable, Sendable {
     public func sdkSettings() throws -> SDKSettings {
         try SDKSettings(sdkPath: sdkPath())
     }
+
+    /// What follows `<architecture>-apple-` in the name of this platform's
+    /// textual module interfaces (`arm64e-apple-ios-macabi.swiftinterface`
+    /// for Mac Catalyst).
+    var textualInterfaceTargetSuffix: String {
+        switch self {
+        case .macOS:
+            return "macos"
+        case .macCatalyst:
+            return "ios-macabi"
+        case .iOS:
+            return "ios"
+        case .tvOS:
+            return "tvos"
+        case .watchOS:
+            return "watchos"
+        case .visionOS:
+            return "xros"
+        case .driverKit:
+            return "driverkit"
+        case .iOSSimulator:
+            return "ios-simulator"
+        case .tvOSSimulator:
+            return "tvos-simulator"
+        case .watchOSSimulator:
+            return "watchos-simulator"
+        case .visionOSSimulator:
+            return "xros-simulator"
+        }
+    }
 }
 
 /// The subset of an SDK's `SDKSettings.plist` the indexer consumes: enough to

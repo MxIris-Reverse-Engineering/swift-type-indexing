@@ -71,6 +71,25 @@ struct SDKIntegrationTests {
         let typeDatabase = try await Self.indexedDatabase(for: .macOS)
         #expect(await typeDatabase.swiftName(forCName: "UICellConfigurationState", category: .objcClass) == nil)
     }
+
+    /// CoreFoundation declares `CGFloat` under
+    /// `@_originallyDefinedIn(module: "CoreGraphics", macOS 10.0)`.
+    @Test
+    func cgFloatMovedFromCoreGraphicsToCoreFoundation() async throws {
+        let typeDatabase = try await Self.indexedDatabase(for: .macOS)
+        let sdkVersion = OperatingSystemVersion(majorVersion: 13, minorVersion: 0, patchVersion: 0)
+        #expect(await typeDatabase.declaringModuleName(ofMovedTypeNamed: "CGFloat", originallyDefinedIn: "CoreGraphics", builtAgainst: sdkVersion) == "CoreFoundation")
+    }
+
+    /// SwiftUICore took `View` over from SwiftUI in macOS 15.
+    @Test
+    func swiftUIViewMovedToSwiftUICoreInMacOS15() async throws {
+        let typeDatabase = try await Self.indexedDatabase(for: .macOS)
+        let macOS15 = OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0)
+        let macOS14 = OperatingSystemVersion(majorVersion: 14, minorVersion: 6, patchVersion: 0)
+        #expect(await typeDatabase.declaringModuleName(ofMovedTypeNamed: "View", originallyDefinedIn: "SwiftUI", builtAgainst: macOS15) == "SwiftUICore")
+        #expect(await typeDatabase.declaringModuleName(ofMovedTypeNamed: "View", originallyDefinedIn: "SwiftUI", builtAgainst: macOS14) == nil)
+    }
 }
 
 #endif

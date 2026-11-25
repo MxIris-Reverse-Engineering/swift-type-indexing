@@ -4,7 +4,7 @@
 
 ## 这个模块做什么
 
-Swift mangling 把 C / Objective-C 导入的类型记成 `__C.X`：模块是占位的 `__C`，`X` 是 C 名（ObjC 类是运行时名），Swift 侧的改名与所属模块都不在二进制里。`TypeDatabase` 借本机的 SDK 回答两件事：`X` 是哪个模块声明的（`moduleName(forTypeName:)`），它在 Swift 里叫什么（`swiftName(forCName:category:)`）。本包不读 Mach-O：私有类型的归属靠调用方传入的 `DeclaredTypeNameSource`（MachOObjCSection 的 `ObjCDeclaredTypeNames` 读 ObjC 元数据实现它）。
+Swift mangling 把 C / Objective-C 导入的类型记成 `__C.X`：模块是占位的 `__C`，`X` 是 C 名（ObjC 类是运行时名），Swift 侧的改名与所属模块都不在二进制里。`TypeDatabase` 借本机的 SDK 回答两件事：`X` 是哪个模块声明的（`moduleName(forTypeName:)`），它在 Swift 里叫什么（`swiftName(forCName:category:)`）。另外还回答一件与 `__C` 无关的事：被 SDK 用 `@_originallyDefinedIn` 搬过模块的原生 Swift 类型，现在由哪个模块声明（`declaringModuleName(ofMovedTypeNamed:originallyDefinedIn:builtAgainst:)`，见「搬家记录」一节）。本包不读 Mach-O：私有类型的归属靠调用方传入的 `DeclaredTypeNameSource`（MachOObjCSection 的 `ObjCDeclaredTypeNames` 读 ObjC 元数据实现它）。
 
 使用方：MachOSwiftSection 的 `SwiftTypeNameResolution`（把它适配成打印器的 `ModuleNameResolving` / `CImportedNameResolving`，`swift-section interface --resolve-c-module-names` 用它）、MachOObjCSection 的 `ObjCTypeIndexing`、RuntimeViewer。
 
@@ -31,6 +31,18 @@ swiftName(forCName: "CFStringRef", category:)   ← identifier 重写（见下�
 - 跨文件合并：几个模块的 API notes 为了标注自己的 category 方法都会列 `NSObject`，成员逐个累加、后读的文件按成员覆盖；没写类本身标注的列法不会抹掉先前的类标注。
 - 存的是原始的两个属性，不是推导后的 Swift 名：成员一级要打印的是宏。
 - 依赖 swift-apinotes 0.3.0：此前它的 `ObjCContext.methods` / `properties` 是 internal，包外读不到。
+
+## 搬家记录：被 `@_originallyDefinedIn` 搬过模块的 Swift 类型
+
+MachOSwiftSection 的提案 [moved-swift-type-modules](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/draft-moved-swift-type-modules.md) 加的第二类数据，与 `__C` 无关：Apple 把一个 Swift 类型从一个模块搬进另一个模块时，给声明加上 `@_originallyDefinedIn(module: "旧模块", 平台 版本)`，编译器此后在每个部署目标上都按旧模块做 mangling（Swift 源码 `lib/AST/Decl.cpp` 的 `getAlternateModuleName()`；属性是否生效只看平台、不看版本，`lib/AST/Attr.cpp` 的 `isActivePlatform`），嵌套在它里面的类型也跟着用旧模块。所以二进制只会写 `CoreGraphics.CGFloat`、`SwiftUI.View`，SDK 的接口写的却是 `CoreFoundation::CGFloat`、`SwiftUICore.View`。`declaringModuleName(ofMovedTypeNamed:originallyDefinedIn:builtAgainst:)` 回答现在由哪个模块声明。
+
+- **数据来自文本 `.swiftinterface`，不来自 sourcekitd**：sourcekitd 生成的接口不留属性，而且只为依赖过滤命中的模块生成，而搬家后的模块常常不是二进制的直接依赖。`MovedTypeIndex` 在第一次 `index` 的 `discoverSDK()` 里扫描 SDK 里**每一个**模块：在 `.swiftmodule` 目录下挑 `<架构>-apple-<平台后缀>.swiftinterface`（`SDKPlatform.textualInterfaceTargetSuffix`；`.private` / `.package` 接口的后缀不同，自然排除；几种架构按文件名取第一个，属性对每个平台都写全，所以选哪个都一样），没有文本接口的模块跳过，读失败记日志跳过。
+- **扫描规则**：编译器打印接口时一个属性占一行，而这个属性只出现在顶层声明上，所以只看第 0 列。连续的属性行组成一组，组后第一行是声明；声明行开头也可能带属性（`@frozen public struct …`），去掉属性和修饰词后剩下的才是声明。`struct` / `class` / `enum` / `protocol` / `actor` / `typealias` 才记，extension、func、var 丢掉。缩进行（成员）和 `#if` / `#else` / `#endif` 都让这一组作废；注释与空行不影响。
+- **模块名**：`module:` 的值写成 `"Swift;CompatibilitySpan"` 时，分号前是 mangling 用的模块，分号后是链接用的库（`OriginallyDefinedInAttr` 的 `ManglingModuleName` / `LinkerModuleName`）。取前半段；它等于声明所在的模块（标准库的 `Span`）就不算搬家。
+- **版本判断**：表里逐个声明存「平台 → 搬家版本」，同一模块的不同声明搬家时间不同（SwiftUICore 有 macOS 15.0、15.2、26.0、27.0 几批）。调用方传入二进制编译所用的 SDK 版本（`LC_BUILD_VERSION` 的 `sdk`），不低于搬家版本才回答。平台取法照编译器的平台继承（`lib/AST/PlatformKindUtils.cpp`）：Mac Catalyst 先看 `macCatalyst` 条目、没有就用 `iOS` 的（版本号相同）；visionOS 先看 `visionOS`、没有就用 `iOS` 并换算（iOS 17 = visionOS 1，18 = 2，26 起相同，17 以前视为 visionOS 出现前就已搬家）；模拟器与真机同。属性没写某个平台，就是在那个平台不生效，mangling 本来就是新模块，回答 `nil`。
+- **同一个键两个模块都声明**：按发现顺序（搜索路径优先级）先到先得，记一条日志。
+- **已知偏差**：属性的版本不一定等于源码真正搬家的时间。`CGFloat` 写的是 macOS 10.0，SDK 的 `libswiftCoreFoundation.tbd` 里的 `$ld$previous` 却显示部署目标在 10.15–13.0 时它链接到 `libswiftCoreGraphics.dylib`，即运行时 macOS 13 才搬。这里信属性。
+- **成本**：macOS 27.2 SDK 有 368 个 `.swiftmodule`、266 份 macOS 文本接口；带上扫描后，一次只读 API notes 的 macOS 索引（`moduleFilter` 不选任何模块）在公司那台 10 核 Mac Studio 上单独跑约 1.7 秒（`SDKIntegrationTests.cgFloatMovedFromCoreGraphicsToCoreFoundation`）。扫描先用 `contains("@_originallyDefinedIn")` 跳过不含这个属性的文件。
 
 ## Identifier 重写：C 拼写 → Swift 拼写（用户指正驱动）
 
@@ -75,6 +87,7 @@ AttributeGraph 这类私有框架在 SDK 里没有任何模块（无头文件、
 | `ModuleIndexCacheEntry` / `ModuleIndexCache` | per-module JSON 缓存 | 见下节 |
 | `ModuleInterfaceIndexer` | 单模块管线：缓存 → 生成 → 提取 → 回写 | 单模块失败记日志返回 `nil`，不作废整轮索引；submodule interface 并入主模块条目（归属永远写顶层模块名）；**任一 submodule 失败则本轮照常返回但不写缓存**（缓存无完整性标记，写了就把缺口固化到 SDK/generator 版本变化为止——review 发现 4）；sourcekitd 调用经 `InterfaceGenerator` 闭包注入缝，缓存纪律可脱离 sourcekitd 单测 |
 | `TypeDatabase` | actor：三源合并 + 懒索引 + 查询 | 第一次 `index` 发现 SDK 并登记 API notes，之后每次只补没索引过的模块与依赖；`register(moduleEntries:)` / `register(apiNotesIndex:)` / `register(supplementaryAPINotesFiles:)` / `register(dependencies:)` 四步是 internal，测试经 `@testable import` 直接驱动，合并优先级因此可脱离 sourcekitd 单测；task group 结果按**完成序**到达，注册前经 `entriesInDiscoveryOrder` 重排回 SDK 发现序（后写覆盖 + 完成序 = 同名归属跨两次运行不确定——review 发现 7）；`moduleName(forImagePath:)` 的扩展名剥除循环带不动点守卫（前导点名字如 `.hidden` 是剥除不动点，曾死循环——review 发现 5） |
+| `MovedTypeIndex` / `MovedTypeDeclaration` / `PlatformVersion` | 文本 `.swiftinterface` → 搬家记录（纯函数扫描 + 文件挑选） | 只看第 0 列；版本按数值比较、补零（`15` 等于 `15.0`）；见「搬家记录」一节 |
 | `DeclaredTypeNameSource` | 依赖 image 的类型名来源（协议） | 本包不读 Mach-O；MachOObjCSection 的 `ObjCDeclaredTypeNames` 实现它。使用方的模块过滤通常取依赖 image 名集合（`TypeDatabase.moduleName(forImagePath:)`：剥全部扩展名 + `libswift` 前缀） |
 
 ## 缓存布局
