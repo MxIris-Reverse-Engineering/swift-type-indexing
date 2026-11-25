@@ -6,7 +6,9 @@ Guidance for coding agents working in this repository.
 
 `swift-type-indexing` (module `TypeIndexing`) resolves the C and Objective-C types Swift manglings
 spell as `__C.X`: which module declares `X`, what Swift calls it, and which API notes annotations
-(`SwiftName`, `SwiftPrivate`) an Objective-C class, protocol or member carries. It reads the SDKs of
+(`SwiftName`, `SwiftPrivate`) an Objective-C class, protocol or member carries. It also says which
+module declares a Swift type the SDK moved between modules (`@_originallyDefinedIn`), read from the
+SDK's textual `.swiftinterface` files. It reads the SDKs of
 the active developer directory; it reads no Mach-O file. How the pipeline works and why each part has
 its shape: `Documentations/Internal/TypeIndexingPipeline.md` — read it before changing a source file.
 
