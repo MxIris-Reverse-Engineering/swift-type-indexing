@@ -6,7 +6,7 @@
 
 | # | 标题 | 状态 |
 |---|------|------|
-| [cross-repository MachOSwiftSection draft](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/draft-moved-swift-type-modules.md) | 被 SDK 搬过家的 Swift 类型，按现在声明它的模块打印：由 MachOSwiftSection 维护唯一提案；本包从 SDK 的文本 `.swiftinterface` 读出 `@_originallyDefinedIn` 搬家记录并提供查询 | In Progress |
+| [cross-repository MachOSwiftSection 0107](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/0107-moved-swift-type-modules.md) | 被 SDK 搬过家的 Swift 类型，按现在声明它的模块打印：由 MachOSwiftSection 维护唯一提案；本包从 SDK 的文本 `.swiftinterface` 读出 `@_originallyDefinedIn` 搬家记录并提供查询（0.2.0） | Implemented |
 | [cross-repository MachOSwiftSection 0105](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/0105-swift-type-indexing-package.md) | 类型索引独立成 swift-type-indexing 包，并接入 MachOObjCSection 与 RuntimeViewer：由 MachOSwiftSection 维护唯一提案；本包是搬出来的 `TypeIndexing` 本身 | Implemented |
 | [cross-repository MachOSwiftSection 0009](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/0009-type-indexing-revival.md) | TypeIndexing 重启：`__C` 类型模块归属解析的索引管线修复与重构（搬家前） | Implemented |
 | [cross-repository MachOSwiftSection 0010](https://github.com/MxIris-Reverse-Engineering/MachOSwiftSection/blob/next/Documentations/Evolutions/0010-community-type-mapping-bundles.md) | 补充类型映射：私有框架 `__C` 类型的用户自备 APINotes 加载（搬家前） | Implemented |
